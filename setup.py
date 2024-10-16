@@ -1,11 +1,11 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='netsimp',
+    name='OSMsimp',
     version='1.0.0',
     description='package to simplify networks from OpenstreetMap',
     author='Adrien Fauste-Gay',
-    author_email='adrien.faustegay@gmail.com',
+    author_email='adrien.fauste-gay@univ-grenoble-alpes.fr',
     #url='https://github.com/yourusername/your-package',
     packages=find_packages(),
     install_requires=[],
