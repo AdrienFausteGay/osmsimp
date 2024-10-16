@@ -25,7 +25,10 @@ def extract_from_PBF(input_folder, prefilter=None,
         logging.info("Processed file: " + str(file))
         print("Processed file: " + str(file))
         PBF_inputfile = os.path.join(input_folder, file)
-        JSON_outputfile = os.path.join('C:/Users', 'gay', 'Documents', 'Github', 'travail perso', "json",
+        JSON_path = os.join(input_folder, "JSON")
+        if not os.path.exists(JSON_path):
+            os.mkdir(JSON_path)
+        JSON_outputfile = os.path.join(JSON_path, #'C:/Users', 'gay', 'Documents', 'Github', 'travail perso', "json",
                                        file[:-15] + '.json')
         logging.info("Extracting network from:" + str(file))
         print("Extracting network from:" + str(file))
