@@ -10,9 +10,9 @@ setup(
     packages=find_packages(),
     install_requires=[],
     classifiers=[
-        'Development Status :: Production',
-        'Intended Audience :: Network Scientists',
-        'License :: OSI Approved :: CC License',
+        'Development Status :: 3 - Alpha',
+        'Intended Audience :: Science/Research',
+        'License :: OSI Approved :: GNU General Public License v3 (GPLv3)',
         'Programming Language :: Python :: 3.9',
     ],
 )

@@ -1,3 +1,5 @@
 __pycache__/
 test/
-netsimp.egg-info/
+dist/
+OSMsimp.egg-info/
+build/
