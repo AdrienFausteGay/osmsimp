@@ -6,7 +6,7 @@ from shapely.geometry import MultiLineString
 import shapely
 from tqdm import tqdm
 import logging
-
+logging.basicConfig(level=logging.INFO)
 import os
 from sklearn.cluster import DBSCAN
 import numpy as np

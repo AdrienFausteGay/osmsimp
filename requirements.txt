@@ -9,4 +9,6 @@ osmnx~=1.3.0
 networkx~=2.8.4
 pandas~=1.5.3
 progressbar~=2.5
-SKLEARN_ALLOW_DEPRECATED_SKLEARN_PACKAGE_INSTALL=True #Ligne ajoutée et non présente sur l'ancien git
+esy~=1.2.0
+esy-osm-pbf~=0.0.1
+esy-osmfilter~=1.0.11

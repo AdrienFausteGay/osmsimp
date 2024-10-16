@@ -1,4 +1,5 @@
 import os
+# os.environ["SKLEARN_ALLOW_DEPRECATED_SKLEARN_PACKAGE_INSTALL"] = "True" #Ligne ajoutée et non présente sur l'ancien git
 
 from esy.osmfilter import run_filter
 from esy.osmfilter import Node, Way, Relation

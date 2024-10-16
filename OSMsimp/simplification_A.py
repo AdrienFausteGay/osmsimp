@@ -9,7 +9,10 @@ from pyogrio import read_dataframe
 from sklearn.neighbors import BallTree
 import shutil
 import logging
-
+# Réinitialiser les handlers s'ils existent déjà
+for handler in logging.root.handlers[:]:
+    logging.root.removeHandler(handler)
+logging.basicConfig(level=logging.INFO)
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -19,7 +22,7 @@ def explode(gdf):
     exploded_lines = {'geometry': [], 'highway': [], 'maxspeed': []}
 
     # Iterate over each row in the GeoDataFrame
-    for idx, row in tqdm(gdf.iterrows(), total=len(gdf)):
+    for idx, row in tqdm(gdf.iterrows(), total=len(gdf), desc='Exploding edges'):
         # Get the LineString geometry and attributes
         geometry = row['geometry']
         attribute_1 = row['highway']
