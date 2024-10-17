@@ -1,6 +1,6 @@
 setuptools~=65.6.3
 geopandas~=0.12.2
-numpy<2,>=1.26.0
+numpy>=1.24
 tqdm~=4.64.1
 shapely~=2.0.1
 pyogrio~=0.6.0
@@ -12,4 +12,3 @@ progressbar~=2.5
 esy~=1.2.0
 esy-osm-pbf~=0.0.1
 esy-osmfilter~=1.0.11
-protobuf==3.20.3

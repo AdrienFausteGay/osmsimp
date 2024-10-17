@@ -3,7 +3,7 @@ from pathlib import Path
 
 setup(
     name='OSMsimp',
-    version='1.0.3',
+    version='1.0.42',
     description='package to simplify networks from OpenstreetMap',
     author='Adrien Fauste-Gay',
     author_email='adrien.fauste-gay@univ-grenoble-alpes.fr',

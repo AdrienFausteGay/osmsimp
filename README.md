@@ -34,6 +34,10 @@ This repository implements a workflow that extracts and simplifies transport net
 
 ## Workflow Description
 
+### Python requirements
+
+OSMsimp has been developped on python 3.9. Use environment with this version of python. See requirements.txt for packages to install.
+
 ### Data Extraction
 
 The workflow utilizes **PBF** files downloaded from [Geofabrik](https://download.geofabrik.de/) to extract relevant transport infrastructure data from OpenStreetMap. We use the **esy-osmfilter** library to filter out unnecessary data and extract the main road types labeled as `motorway`, `motorway_link`, `trunk`, and `trunk_link`. The extracted network data is saved in **GeoJSON** format, containing the nodes and edges of the transport network.
