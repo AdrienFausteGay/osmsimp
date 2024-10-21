@@ -26,7 +26,7 @@ def explode(gdf):
         # Get the LineString geometry and attributes
         geometry = row['geometry']
         attribute_1 = row['highway']
-        attribute_2 = row['maxspeed']
+        # attribute_2 = row['maxspeed']
 
         # Explode the LineString into separate segments
         segments = list(geometry.coords)
@@ -34,7 +34,7 @@ def explode(gdf):
             segment = LineString([segments[i], segments[i + 1]])
             exploded_lines["geometry"].append(segment)
             exploded_lines['highway'].append(attribute_1)
-            exploded_lines['maxspeed'].append(attribute_2)
+            # exploded_lines['maxspeed'].append(attribute_2)
 
     # Create a new GeoDataFrame from the exploded LineStrings
     exploded_gdf = gpd.GeoDataFrame(exploded_lines)
