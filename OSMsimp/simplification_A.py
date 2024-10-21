@@ -19,7 +19,7 @@ warnings.filterwarnings('ignore')
 from itertools import combinations
 
 def explode(gdf):
-    exploded_lines = {'geometry': [], 'highway': [], 'maxspeed': []}
+    exploded_lines = {'geometry': [], 'highway': []}
 
     # Iterate over each row in the GeoDataFrame
     for idx, row in tqdm(gdf.iterrows(), total=len(gdf), desc='Exploding edges'):
