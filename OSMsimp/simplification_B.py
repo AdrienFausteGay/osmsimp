@@ -261,7 +261,7 @@ def remove_useless_nodes(edges, nodes):
     edges = edges[~boolean_isolated_edges]
     nodes = nodes[~nodes['osmid'].isin(node_ids_to_remove)]
     print_nb_edges_nodes(edges, nodes)
-    return edges, nodes
+    return edges, nodes, len(degree2_nodes)
 
 
 def simplification_B(files_folder, epsi=None):
@@ -279,7 +279,7 @@ def simplification_B(files_folder, epsi=None):
         logging.info("Working on: " + str(i[:-5]))
         print_nb_edges_nodes(edges, nodes)
 
-        edges, nodes = remove_useless_nodes(edges, nodes)
+        edges, nodes, num_degree_2 = remove_useless_nodes(edges, nodes)
 
         nodes["osmid"] = range(len(nodes["osmid"]))
         edges = assignEndpoints(edges, nodes)
@@ -299,12 +299,13 @@ def simplification_B(files_folder, epsi=None):
 
         print_nb_edges_nodes(edges, nodes)
 
-        edges, nodes = remove_useless_nodes(edges, nodes)
+        while num_degree_2 > 0:
+            edges, nodes, num_degree_2 = remove_useless_nodes(edges, nodes)
 
-        logging.debug("removing duplicate rows")
-        edges = remove_duplicate_rows(edges)
+            logging.debug("removing duplicate rows")
+            edges = remove_duplicate_rows(edges)
 
-        edges, nodes = remove_useless_nodes(edges, nodes)
+        # edges, nodes = remove_useless_nodes(edges, nodes)
 
         # Export
         edges['u'] = edges['u'].astype(int)  # recast, create a bug otherwise
