@@ -140,15 +140,20 @@ def merge_close_points(df_nodes, df_edges, eps=0.001, min_samples=2):
     df_edges_new['u'] = df_edges_new['u'].map(node_map).fillna(df_edges_new['u'])
     df_edges_new['v'] = df_edges_new['v'].map(node_map).fillna(df_edges_new['v'])
 
-    new_nodes_t = new_nodes.loc[new_nodes["cluster"] == -1]
+    new_nodes_t = new_nodes.loc[new_nodes["cluster"] == -1].copy()
 
-    df_edges_new['geometry'] = [
-        LineString([
-            new_nodes_t.loc[new_nodes_t["new index"] == u, "geometry"].values[0],
-            new_nodes_t.loc[new_nodes_t["new index"] == v, "geometry"].values[0]
-        ])
-        for u, v in progressbar.progressbar(zip(df_edges_new['u'], df_edges_new['v']), max_value=len(df_edges_new))
-    ]
+    # Créer la barre de progression avec progressbar2
+    bar = progressbar.ProgressBar(maxval=len(df_edges_new))
+
+    # Utiliser la barre de progression dans la boucle
+    for u, v in bar(zip(df_edges_new['u'], df_edges_new['v'])):
+        df_edges_new['geometry'] = [
+            LineString([
+                new_nodes_t.loc[new_nodes_t["new index"] == u, "geometry"].values[0],
+                new_nodes_t.loc[new_nodes_t["new index"] == v, "geometry"].values[0]
+            ])
+            for u, v in zip(df_edges_new['u'], df_edges_new['v'])
+        ]
     new_nodes_t.drop(columns=['osmid'], inplace=True)
     new_nodes_t = new_nodes_t.rename(columns={'new index': 'osmid'})
     return new_nodes_t, df_edges_new
