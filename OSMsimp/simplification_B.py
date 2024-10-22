@@ -17,6 +17,8 @@ import progressbar
 from sklearn.neighbors import BallTree
 import shutil
 from scipy.spatial.distance import pdist
+import pyproj
+from makegraphconnected import make_graph_connected
 
 
 def get_degree1_nodes(nodes: gpd.GeoDataFrame, edges: gpd.GeoDataFrame) -> list:
@@ -36,6 +38,7 @@ def identify_edges_connected_to_one_node(node_id: int, edges: gpd.GeoDataFrame) 
 
 
 def remove_degree2_node_and_merge(degree2_node_id: int, edges: gpd.GeoDataFrame):
+    crs = edges.crs  # Stocker le CRS initial
     # identify start edge
     edge_ids_to_merge = identify_edges_connected_to_one_node(degree2_node_id, edges)
     if len(edge_ids_to_merge) != 2:
@@ -80,14 +83,47 @@ def remove_degree2_node_and_merge(degree2_node_id: int, edges: gpd.GeoDataFrame)
     edges = edges.drop(edge_ids_to_merge, axis=0)
     # print('removing '+str(edge_ids_to_merge))
     # print('new edge added with endpoints '+str(merged_edge[['u', 'v']].to_list()))
+    # Réassigner le CRS au GeoDataFrame résultant après concaténation
+    edges = edges.set_crs(crs)
     return edges, {"success": True}
 
 
 def print_nb_edges_nodes(edges, nodes):
     logging.info(f"There are {edges.shape[0]} edges and {nodes.shape[0]} nodes")
 
+def project_to_utm(gdf):
+    """
+    Projette un GeoDataFrame en coordonnées géographiques (latitude/longitude) vers le système de coordonnées UTM approprié.
 
-def merge_close_points(df_nodes, df_edges, eps=0.001, min_samples=2):
+    :param gdf: GeoDataFrame en coordonnées géographiques (CRS WGS84)
+    :return: GeoDataFrame projeté en UTM, code EPSG utilisé
+    """
+    # Vérifier que le CRS actuel est WGS84 (EPSG:4326)
+    if gdf.crs.to_epsg() != 4326:
+        gdf = gdf.to_crs(epsg=4326)
+
+    # Calculer le centroïde de l'ensemble des données
+    centroid = gdf.unary_union.centroid
+    lon, lat = centroid.x, centroid.y
+
+    # Calculer la zone UTM
+    utm_zone = int((lon + 180) / 6) % 60 + 1  # Modulo pour gérer les longitudes négatives
+
+    # Déterminer l'hémisphère
+    if lat >= 0:
+        hemisphere = 'north'
+        epsg_code = 32600 + utm_zone  # EPSG pour l'hémisphère Nord
+    else:
+        hemisphere = 'south'
+        epsg_code = 32700 + utm_zone  # EPSG pour l'hémisphère Sud
+
+    # Projeter le GeoDataFrame
+    gdf_utm = gdf.to_crs(epsg=epsg_code)
+
+    return gdf_utm, epsg_code
+
+
+def merge_close_points(df_nodes, df_edges, p=0.5, min_samples=2):
     """
     Given GeoDataFrames with Point geometries for nodes and LineString geometries for edges,
     merges nearby nodes within a given distance threshold using DBSCAN clustering algorithm,
@@ -99,23 +135,40 @@ def merge_close_points(df_nodes, df_edges, eps=0.001, min_samples=2):
     :param min_samples: DBSCAN minimum number of samples (default: 2)
     :return: Tuple of GeoDataFrames with merged Point geometries for nodes and updated endpoints for edges
     """
+    #Projection dans un crs adapté
+    df_nodes, epsg_code = project_to_utm(df_nodes)
+    df_edges = df_edges.set_crs(epsg=4326)
+    df_edges = df_edges.to_crs(epsg=epsg_code)
+    # print(df_edges.crs, df_nodes.crs)
     # Convert the node geometries to 2D numpy array for clustering
     coords = np.vstack(df_nodes.geometry.apply(lambda x: (x.x, x.y)).values)
 
-    # Scale the coordinates for better clustering performance
-    scaler = StandardScaler().fit(coords)
-    coords_scaled = scaler.transform(coords)
+    # # Scale the coordinates for better clustering performance
+    # scaler = StandardScaler().fit(coords)
+    # coords_scaled = scaler.transform(coords)
 
-    # # Calculer la distance maximale dans l'espace standardisé
-    # max_distance = np.max(pdist(coords_scaled, 'euclidean'))
-    
-    # # Calculer epsi en fonction du paramètre normalisé p
-    # epsi_min = 1e-10  # Valeur minimale pour éviter epsi=0
-    # epsi = epsi_min + p * (max_distance - epsi_min)
-    
+    # Calculer les longueurs des arêtes
+    df_edges['length'] = df_edges.geometry.length
+
+    # Calculer des statistiques sur les longueurs des arêtes
+    median_edge_length = df_edges['length'].median()
+    min_edge_length = df_edges['length'].min()
+    max_edge_length = df_edges['length'].max()
+
+    # Définir epsi_min et epsi_max en fonction des longueurs des arêtes
+    epsi_min = min_edge_length * 0.5  # Par exemple, la moitié de la plus petite arête
+    epsi_max = median_edge_length * 2  # Par exemple, deux fois la longueur médiane des arêtes
+
+    # Assurer que epsi_min est positif et inférieur à epsi_max
+    epsi_min = max(epsi_min, 1e-10)
+    epsi_max = max(epsi_max, epsi_min * 1.1)  # Assurer que epsi_max > epsi_min
+
+    # Calculer epsi en fonction du paramètre normalisé p
+    epsi = epsi_min + p * (epsi_max - epsi_min)
+    print(f"RAYON DE SIMPLIFICATION (epsi) : {epsi} km (epsi_min={epsi_min}, epsi_max={epsi_max})")
 
     # Apply DBSCAN clustering to the scaled coordinates
-    dbscan = DBSCAN(eps=eps, min_samples=min_samples, metric='euclidean', algorithm='auto').fit(coords_scaled)
+    dbscan = DBSCAN(eps=epsi, min_samples=min_samples, metric='euclidean', algorithm='auto').fit(coords)
 
     # Assign cluster labels to the original node dataframe
     df_nodes_new = df_nodes.copy()
@@ -234,18 +287,17 @@ def remove_useless_nodes(edges, nodes):
     N_same_start_end = len(edges[boolean_same_start_end])
     # print(f'Removing {boolean_same_start_end.sum()} edges with same start and end nodes')
     edges = edges[~boolean_same_start_end]
-    print_nb_edges_nodes(edges, nodes)
+    # print_nb_edges_nodes(edges, nodes)
 
     # Remove nodes that are nowhere (can happen after the previous step)
     boolean_useless_nodes = ~nodes['osmid'].isin(edges['u']) & ~nodes['osmid'].isin(edges['v'])
     # print(f'Removing {boolean_useless_nodes.sum()} nodes attached to no edges')
     nodes = nodes[~boolean_useless_nodes]
-    print_nb_edges_nodes(edges, nodes)
+    # print_nb_edges_nodes(edges, nodes)
 
     # Calculate nb of degree 2 nodes
     degree2_nodes = get_degree2_nodes(nodes, edges)
     logging.info(f"Removing {len(degree2_nodes)} degree-2 nodes")
-
     # Rearrange the edges without them
     node_ids_to_remove = []
     issues = []
@@ -258,7 +310,6 @@ def remove_useless_nodes(edges, nodes):
             issues += [result['log']]
         # Removing the successully treated nodes from nodes
     nodes = nodes[~nodes['osmid'].isin(node_ids_to_remove)]
-
     # print(f"There are {len(get_degree2_nodes(nodes, edges))} degree-2 nodes left")
     # print_nb_edges_nodes(edges, nodes)
 
@@ -274,7 +325,7 @@ def remove_useless_nodes(edges, nodes):
     return edges, nodes, len(degree2_nodes), N_same_start_end
 
 
-def simplification_B(files_folder, epsi=None):
+def simplification_B(files_folder, p=0.5, correction_connexe=True):
     logging.info("SIMPLIFICATION B PHASE")
     files_folder = os.path.join(os.path.dirname(files_folder), "simp_A")
     files = set([file for file in os.listdir(os.path.join(files_folder)) if
@@ -296,31 +347,45 @@ def simplification_B(files_folder, epsi=None):
 
         nodes["osmid"] = range(len(nodes["osmid"]))
         edges = assignEndpoints(edges, nodes)
+        if correction_connexe:
+            nodes, edges = make_graph_connected(nodes, edges)
 
-        if epsi == None:
-            if len(nodes) < 400:
-                epsi = 0.005
-            else:
-                epsi = 0.01
+        # if epsi == None:
+        #     if len(nodes) < 400:
+        #         epsi = 0.005
+        #     else:
+        #         epsi = 0.01
 
-        logging.debug("epsi " + str(i) + " : " + str(epsi))
+        # logging.debug("epsi " + str(i) + " : " + str(epsi))
 
-        nodes_simp, edges_simp = merge_close_points(nodes, edges, eps=epsi, min_samples=2)
+        nodes_simp, edges_simp = merge_close_points(nodes, edges, p=p, min_samples=2)
 
         nodes = nodes_simp
         edges = edges_simp
 
-        print_nb_edges_nodes(edges, nodes)
+        if len(nodes) == 1: #gestion du cas où la simplification est si forte qu'il ne reste qu'un noeud
+            # Cast types (seems to create pb in exporting otherwise)
+            edges['u'] = edges['u'].astype(int)
+            edges['v'] = edges['v'].astype(int)
+            nodes['osmid'] = nodes['osmid'].astype(int)
 
-        num_degree_2 = 1
-        N_same_start_end = 1
-        while num_degree_2 > 0 or N_same_start_end > 0:
-            edges, nodes, _, _ = remove_useless_nodes(edges, nodes)
+            # Remove edges which have the same start and end nodes (seems to happen in edges that are disconnected from the main network)
+            boolean_same_start_end = edges['u'] == edges['v']
+            N_same_start_end = len(edges[boolean_same_start_end])
+            # print(f'Removing {boolean_same_start_end.sum()} edges with same start and end nodes')
+            edges = edges[~boolean_same_start_end]
+            print_nb_edges_nodes(edges, nodes)
 
-            logging.debug("removing duplicate rows")
-            edges = remove_duplicate_rows(edges)
-            edges, nodes, num_degree_2, N_same_start_end = remove_useless_nodes(edges, nodes)
+        else:
+            print_nb_edges_nodes(edges, nodes)
+            num_degree_2 = 1
+            N_same_start_end = 1
+            while num_degree_2 > 0 or N_same_start_end > 0:
+                edges, nodes, _, _ = remove_useless_nodes(edges, nodes)
 
+                logging.debug("removing duplicate rows")
+                edges = remove_duplicate_rows(edges)
+                edges, nodes, num_degree_2, N_same_start_end = remove_useless_nodes(edges, nodes)
         # edges, nodes = remove_useless_nodes(edges, nodes)
 
         # Export
@@ -336,4 +401,4 @@ def simplification_B(files_folder, epsi=None):
             os.path.join(output_folder, i[:-5] + '_edges.geojson'), driver="GeoJSON")
         if not os.path.exists(os.path.join(files_folder, "Done")):
             os.makedirs(os.path.join(files_folder, "Done"))
-        shutil.move(os.path.join(files_folder, i), os.path.join(files_folder, "Done", i))
+        # shutil.move(os.path.join(files_folder, i), os.path.join(files_folder, "Done", i))
