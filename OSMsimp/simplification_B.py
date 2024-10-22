@@ -16,6 +16,7 @@ from shapely.geometry import Point, MultiPoint, LineString
 import progressbar
 from sklearn.neighbors import BallTree
 import shutil
+from scipy.spatial.distance import pdist
 
 
 def get_degree1_nodes(nodes: gpd.GeoDataFrame, edges: gpd.GeoDataFrame) -> list:
@@ -104,6 +105,14 @@ def merge_close_points(df_nodes, df_edges, eps=0.001, min_samples=2):
     # Scale the coordinates for better clustering performance
     scaler = StandardScaler().fit(coords)
     coords_scaled = scaler.transform(coords)
+
+    # # Calculer la distance maximale dans l'espace standardisé
+    # max_distance = np.max(pdist(coords_scaled, 'euclidean'))
+    
+    # # Calculer epsi en fonction du paramètre normalisé p
+    # epsi_min = 1e-10  # Valeur minimale pour éviter epsi=0
+    # epsi = epsi_min + p * (max_distance - epsi_min)
+    
 
     # Apply DBSCAN clustering to the scaled coordinates
     dbscan = DBSCAN(eps=eps, min_samples=min_samples, metric='euclidean', algorithm='auto').fit(coords_scaled)
@@ -222,6 +231,7 @@ def remove_useless_nodes(edges, nodes):
 
     # Remove edges which have the same start and end nodes (seems to happen in edges that are disconnected from the main network)
     boolean_same_start_end = edges['u'] == edges['v']
+    N_same_start_end = len(edges[boolean_same_start_end])
     # print(f'Removing {boolean_same_start_end.sum()} edges with same start and end nodes')
     edges = edges[~boolean_same_start_end]
     print_nb_edges_nodes(edges, nodes)
@@ -261,7 +271,7 @@ def remove_useless_nodes(edges, nodes):
     edges = edges[~boolean_isolated_edges]
     nodes = nodes[~nodes['osmid'].isin(node_ids_to_remove)]
     print_nb_edges_nodes(edges, nodes)
-    return edges, nodes, len(degree2_nodes)
+    return edges, nodes, len(degree2_nodes), N_same_start_end
 
 
 def simplification_B(files_folder, epsi=None):
@@ -279,7 +289,10 @@ def simplification_B(files_folder, epsi=None):
         logging.info("Working on: " + str(i[:-5]))
         print_nb_edges_nodes(edges, nodes)
 
-        edges, nodes, num_degree_2 = remove_useless_nodes(edges, nodes)
+        N_same_start_end = 1
+        num_degree_2 = 1
+        while num_degree_2 > 0 or N_same_start_end > 0:
+            edges, nodes, num_degree_2, N_same_start_end = remove_useless_nodes(edges, nodes)
 
         nodes["osmid"] = range(len(nodes["osmid"]))
         edges = assignEndpoints(edges, nodes)
@@ -299,11 +312,14 @@ def simplification_B(files_folder, epsi=None):
 
         print_nb_edges_nodes(edges, nodes)
 
-        while num_degree_2 > 0:
-            edges, nodes, num_degree_2 = remove_useless_nodes(edges, nodes)
+        num_degree_2 = 1
+        N_same_start_end = 1
+        while num_degree_2 > 0 or N_same_start_end > 0:
+            edges, nodes, _, _ = remove_useless_nodes(edges, nodes)
 
             logging.debug("removing duplicate rows")
             edges = remove_duplicate_rows(edges)
+            edges, nodes, num_degree_2, N_same_start_end = remove_useless_nodes(edges, nodes)
 
         # edges, nodes = remove_useless_nodes(edges, nodes)
 
