@@ -71,9 +71,10 @@ def remove_degree2_node_and_merge(degree2_node_id: int, edges: gpd.GeoDataFrame)
     except:
         result = {
             "success": False,
-            "log": f"Nodes {degree2_node_id} - merging failed, end_ids is not valid {end_ids}, do nothing for this node",
+            "log": f"Nodes {degree2_node_id} - merging failed, end_ids is not valid {end_ids}, delete one node connected to this node",
             "resulting_geometry": merged_edge_geom
         }
+        edges.drop(edge_ids_to_merge[0], inplace=True)
         return edges, result
     # add the new merged edge
     new_row = merged_edge.to_frame().T
@@ -401,4 +402,4 @@ def simplification_B(files_folder, p=0.5, correction_connexe=True):
             os.path.join(output_folder, i[:-5] + '_edges.geojson'), driver="GeoJSON")
         if not os.path.exists(os.path.join(files_folder, "Done")):
             os.makedirs(os.path.join(files_folder, "Done"))
-        # shutil.move(os.path.join(files_folder, i), os.path.join(files_folder, "Done", i))
+        shutil.move(os.path.join(files_folder, i), os.path.join(files_folder, "Done", i))
