@@ -18,7 +18,7 @@ from sklearn.neighbors import BallTree
 import shutil
 from scipy.spatial.distance import pdist
 import pyproj
-from makegraphconnected import make_graph_connected
+from .makegraphconnected import make_graph_connected
 
 
 def get_degree1_nodes(nodes: gpd.GeoDataFrame, edges: gpd.GeoDataFrame) -> list:
