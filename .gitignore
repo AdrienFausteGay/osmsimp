@@ -6,3 +6,6 @@ build/
 C:/
 Chemin.txt
 OSMsimp/__pycache__/
+run.py 
+run.sh
+OAR*
