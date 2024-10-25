@@ -19,6 +19,7 @@ import shutil
 from scipy.spatial.distance import pdist
 import pyproj
 from .makegraphconnected import make_graph_connected
+from concurrent.futures import ThreadPoolExecutor
 
 
 def get_degree1_nodes(nodes: gpd.GeoDataFrame, edges: gpd.GeoDataFrame) -> list:
@@ -90,7 +91,7 @@ def remove_degree2_node_and_merge(degree2_node_id: int, edges: gpd.GeoDataFrame)
 
 
 def print_nb_edges_nodes(edges, nodes):
-    logging.info(f"There are {edges.shape[0]} edges and {nodes.shape[0]} nodes")
+    logging.debug(f"There are {edges.shape[0]} edges and {nodes.shape[0]} nodes")
 
 def project_to_utm(gdf):
     """
@@ -124,7 +125,7 @@ def project_to_utm(gdf):
     return gdf_utm, epsg_code
 
 
-def merge_close_points(df_nodes, df_edges, p=0.5, min_samples=2):
+def merge_close_points(df_nodes, df_edges, R, min_samples=2):
     """
     Given GeoDataFrames with Point geometries for nodes and LineString geometries for edges,
     merges nearby nodes within a given distance threshold using DBSCAN clustering algorithm,
@@ -148,28 +149,28 @@ def merge_close_points(df_nodes, df_edges, p=0.5, min_samples=2):
     # scaler = StandardScaler().fit(coords)
     # coords_scaled = scaler.transform(coords)
 
-    # Calculer les longueurs des arêtes
-    df_edges['length'] = df_edges.geometry.length
+    # # Calculer les longueurs des arêtes
+    # df_edges['length'] = df_edges.geometry.length
 
-    # Calculer des statistiques sur les longueurs des arêtes
-    median_edge_length = df_edges['length'].median()
-    min_edge_length = df_edges['length'].min()
-    max_edge_length = df_edges['length'].max()
+    # # Calculer des statistiques sur les longueurs des arêtes
+    # median_edge_length = df_edges['length'].median()
+    # min_edge_length = df_edges['length'].min()
+    # max_edge_length = df_edges['length'].max()
 
-    # Définir epsi_min et epsi_max en fonction des longueurs des arêtes
-    epsi_min = min_edge_length * 0.5  # Par exemple, la moitié de la plus petite arête
-    epsi_max = median_edge_length * 2  # Par exemple, deux fois la longueur médiane des arêtes
+    # # Définir epsi_min et epsi_max en fonction des longueurs des arêtes
+    # epsi_min = min_edge_length * 0.5  # Par exemple, la moitié de la plus petite arête
+    # epsi_max = median_edge_length * 2  # Par exemple, deux fois la longueur médiane des arêtes
 
-    # Assurer que epsi_min est positif et inférieur à epsi_max
-    epsi_min = max(epsi_min, 1e-10)
-    epsi_max = max(epsi_max, epsi_min * 1.1)  # Assurer que epsi_max > epsi_min
+    # # Assurer que epsi_min est positif et inférieur à epsi_max
+    # epsi_min = max(epsi_min, 1e-10)
+    # epsi_max = max(epsi_max, epsi_min * 1.1)  # Assurer que epsi_max > epsi_min
 
     # Calculer epsi en fonction du paramètre normalisé p
-    epsi = epsi_min + p * (epsi_max - epsi_min)
-    print(f"RAYON DE SIMPLIFICATION (epsi) : {epsi} km (epsi_min={epsi_min}, epsi_max={epsi_max})")
+    # epsi = epsi_min + p * (epsi_max - epsi_min)
+    # logging.info(f"RAYON DE SIMPLIFICATION (epsi) : {epsi} mètres (epsi_min={epsi_min}, epsi_max={epsi_max})")
 
     # Apply DBSCAN clustering to the scaled coordinates
-    dbscan = DBSCAN(eps=epsi, min_samples=min_samples, metric='euclidean', algorithm='auto').fit(coords)
+    dbscan = DBSCAN(eps=R*1000, min_samples=min_samples, metric='euclidean', algorithm='auto').fit(coords)
 
     # Assign cluster labels to the original node dataframe
     df_nodes_new = df_nodes.copy()
@@ -326,9 +327,9 @@ def remove_useless_nodes(edges, nodes):
     return edges, nodes, len(degree2_nodes), N_same_start_end
 
 
-def simplification_B(files_folder, p=0.5, correction_connexe=True):
+def simplification_B(files_folder, R=30, correction_connexe=True, output_folder=None):
     logging.info("SIMPLIFICATION B PHASE")
-    files_folder = os.path.join(os.path.dirname(files_folder), "simp_A")
+    # files_folder = os.path.join(os.path.dirname(files_folder), "simp_A")
     files = set([file for file in os.listdir(os.path.join(files_folder)) if
                  os.path.isfile(os.path.join(os.path.join(files_folder), file))])
 
@@ -351,20 +352,10 @@ def simplification_B(files_folder, p=0.5, correction_connexe=True):
         if correction_connexe:
             nodes, edges = make_graph_connected(nodes, edges)
 
-        # if epsi == None:
-        #     if len(nodes) < 400:
-        #         epsi = 0.005
-        #     else:
-        #         epsi = 0.01
+        nodes, edges = merge_close_points(nodes, edges, R=R, min_samples=2)
 
-        # logging.debug("epsi " + str(i) + " : " + str(epsi))
-
-        nodes_simp, edges_simp = merge_close_points(nodes, edges, p=p, min_samples=2)
-
-        nodes = nodes_simp
-        edges = edges_simp
-
-        if len(nodes) == 1: #gestion du cas où la simplification est si forte qu'il ne reste qu'un noeud
+        if len(nodes) < 10: #gestion du cas où la simplification est si forte qu'il ne reste qu'une quelques noeuds
+            #C'est pas très propre comme critère... En fait le graphe est réduit à 0 si il n'est fait que de noeuds de degre 2 ou 3...
             # Cast types (seems to create pb in exporting otherwise)
             edges['u'] = edges['u'].astype(int)
             edges['v'] = edges['v'].astype(int)
@@ -387,13 +378,13 @@ def simplification_B(files_folder, p=0.5, correction_connexe=True):
                 logging.debug("removing duplicate rows")
                 edges = remove_duplicate_rows(edges)
                 edges, nodes, num_degree_2, N_same_start_end = remove_useless_nodes(edges, nodes)
-        # edges, nodes = remove_useless_nodes(edges, nodes)
 
         # Export
         edges['u'] = edges['u'].astype(int)  # recast, create a bug otherwise
         edges['v'] = edges['v'].astype(int)
         nodes['osmid'] = nodes['osmid'].astype(int)
-        output_folder = os.path.join(os.path.dirname(files_folder), "simp_B")
+        if output_folder == None:
+            output_folder = os.path.join(os.path.dirname(files_folder), "simp_B")
         if not os.path.exists(output_folder):
             os.makedirs(output_folder)
         nodes.reset_index(drop=True).to_file(
@@ -403,3 +394,74 @@ def simplification_B(files_folder, p=0.5, correction_connexe=True):
         if not os.path.exists(os.path.join(files_folder, "Done")):
             os.makedirs(os.path.join(files_folder, "Done"))
         shutil.move(os.path.join(files_folder, i), os.path.join(files_folder, "Done", i))
+
+
+#Version parralélisée
+
+def process_file(file, files_folder, R, correction_connexe, output_folder):
+    edges = gpd.read_file(os.path.join(files_folder, file), layer=1)
+    nodes = gpd.read_file(os.path.join(files_folder, file), layer=0)
+
+    logging.info("Working on: " + str(file[:-5]))
+    print_nb_edges_nodes(edges, nodes)
+
+    N_same_start_end = 1
+    num_degree_2 = 1
+    while num_degree_2 > 0 or N_same_start_end > 0:
+        edges, nodes, num_degree_2, N_same_start_end = remove_useless_nodes(edges, nodes)
+
+    nodes["osmid"] = range(len(nodes["osmid"]))
+    edges = assignEndpoints(edges, nodes)
+    
+    if correction_connexe:
+        nodes, edges = make_graph_connected(nodes, edges)
+
+    nodes, edges = merge_close_points(nodes, edges, R=R, min_samples=2)
+
+    if len(nodes) < 10:
+        edges['u'] = edges['u'].astype(int)
+        edges['v'] = edges['v'].astype(int)
+        nodes['osmid'] = nodes['osmid'].astype(int)
+        boolean_same_start_end = edges['u'] == edges['v']
+        N_same_start_end = len(edges[boolean_same_start_end])
+        edges = edges[~boolean_same_start_end]
+        print_nb_edges_nodes(edges, nodes)
+
+    else:
+        print_nb_edges_nodes(edges, nodes)
+        num_degree_2 = 1
+        N_same_start_end = 1
+        while num_degree_2 > 0 or N_same_start_end > 0:
+            edges, nodes, _, _ = remove_useless_nodes(edges, nodes)
+            logging.debug("removing duplicate rows")
+            edges = remove_duplicate_rows(edges)
+            edges, nodes, num_degree_2, N_same_start_end = remove_useless_nodes(edges, nodes)
+
+    edges['u'] = edges['u'].astype(int)
+    edges['v'] = edges['v'].astype(int)
+    nodes['osmid'] = nodes['osmid'].astype(int)
+    if output_folder==None:
+        output_folder = os.path.join(os.path.dirname(files_folder), "simp_B")
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+
+    nodes.reset_index(drop=True).to_file(os.path.join(output_folder, file[:-5] + '_nodes.geojson'), driver="GeoJSON")
+    edges[['u', 'v', 'highway', 'geometry']].reset_index(drop=True).to_file(
+        os.path.join(output_folder, file[:-5] + '_edges.geojson'), driver="GeoJSON")
+    
+    if not os.path.exists(os.path.join(files_folder, "Done")):
+        os.makedirs(os.path.join(files_folder, "Done"))
+    shutil.move(os.path.join(files_folder, file), os.path.join(files_folder, "Done", file))
+
+def simplification_B_par(files_folder, R=30, correction_connexe=True, output_folder=None):
+    logging.info("SIMPLIFICATION B PHASE")
+    files = {file for file in os.listdir(os.path.join(files_folder)) if os.path.isfile(os.path.join(files_folder, file))}
+
+    with ThreadPoolExecutor(max_workers=15) as executor:
+        futures = [
+            executor.submit(process_file, file, files_folder, R, correction_connexe, output_folder)
+            for file in files
+        ]
+        
+        for future in futures:
+            future.result()  # Attend que chaque tâche se termine pour gérer les exceptions éventuelles
