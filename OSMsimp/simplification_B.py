@@ -43,21 +43,25 @@ def remove_degree2_node_and_merge(degree2_node_id: int, edges: gpd.GeoDataFrame)
     # identify start edge
     edge_ids_to_merge = identify_edges_connected_to_one_node(degree2_node_id, edges)
     if len(edge_ids_to_merge) != 2:
-        raise ValueError(
-            f"Nodes {degree2_node_id} - there should be exactly two edges to merge, found {len(edge_ids_to_merge)}")
-    # merge the two edges
-    multi_line = shapely.geometry.MultiLineString(
-        [edges.loc[edge_ids_to_merge[0], "geometry"], edges.loc[edge_ids_to_merge[1], "geometry"]]
-    )
-    merged_edge_geom = shapely.ops.linemerge(multi_line)
-    if merged_edge_geom.geom_type != 'LineString':
-        result = {
-            "success": False,
-            "log": f"Nodes {degree2_node_id} - merging failed, expected to produce a LineString, \
-                   produced a {merged_edge_geom.geom_type}, do nothing for this node",
-            "resulting_geometry": merged_edge_geom
-        }
-        return edges, result
+        logging.debug(f"Nodes {degree2_node_id} - there should be exactly two edges to merge, found {len(edge_ids_to_merge)}")
+            # Suppression de l'unique arête trouvée
+        edge_osmid_to_remove = edge_ids_to_merge[0]  # Obtenir l'ID 'osmid' de l'arête à supprimer
+        edge = edge[edge['osmid'] != edge_osmid_to_remove]  # Supprimer la ligne correspondant à cet 'osmid'
+        logging.debug(f"Removed the only edge for node {degree2_node_id} with osmid {edge_osmid_to_remove}")
+    else:
+        # merge the two edges
+        multi_line = shapely.geometry.MultiLineString(
+            [edges.loc[edge_ids_to_merge[0], "geometry"], edges.loc[edge_ids_to_merge[1], "geometry"]]
+        )
+        merged_edge_geom = shapely.ops.linemerge(multi_line)
+        if merged_edge_geom.geom_type != 'LineString':
+            result = {
+                "success": False,
+                "log": f"Nodes {degree2_node_id} - merging failed, expected to produce a LineString, \
+                    produced a {merged_edge_geom.geom_type}, do nothing for this node",
+                "resulting_geometry": merged_edge_geom
+            }
+            return edges, result
     # create new edge row based on the first edge to merge (arbitrary)
     merged_edge = edges.loc[edge_ids_to_merge[0]].copy(deep=True)
     merged_edge['geometry'] = merged_edge_geom
@@ -373,8 +377,11 @@ def simplification_B(files_folder, R=30, correction_connexe=True, output_folder=
             num_degree_2 = 1
             N_same_start_end = 1
             while num_degree_2 > 0 or N_same_start_end > 0:
+                if len(nodes)<10:
+                    break
                 edges, nodes, _, _ = remove_useless_nodes(edges, nodes)
-
+                if len(nodes)<10:
+                    break
                 logging.debug("removing duplicate rows")
                 edges = remove_duplicate_rows(edges)
                 edges, nodes, num_degree_2, N_same_start_end = remove_useless_nodes(edges, nodes)
@@ -451,7 +458,7 @@ def process_file(file, files_folder, R, correction_connexe, output_folder):
     
     if not os.path.exists(os.path.join(files_folder, "Done")):
         os.makedirs(os.path.join(files_folder, "Done"))
-    shutil.move(os.path.join(files_folder, file), os.path.join(files_folder, "Done", file))
+    # shutil.move(os.path.join(files_folder, file), os.path.join(files_folder, "Done", file))
 
 def simplification_B_par(files_folder, R=30, correction_connexe=True, output_folder=None):
     logging.info("SIMPLIFICATION B PHASE")
