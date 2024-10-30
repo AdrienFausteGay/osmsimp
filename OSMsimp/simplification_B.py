@@ -20,7 +20,7 @@ from scipy.spatial.distance import pdist
 import pyproj
 from .makegraphconnected import make_graph_connected
 from concurrent.futures import ThreadPoolExecutor
-
+from pyogrio import read_dataframe
 
 def get_degree1_nodes(nodes: gpd.GeoDataFrame, edges: gpd.GeoDataFrame) -> list:
     node_occurrence_as_start_end = pd.concat([edges['u'], edges['v']], axis=0, ignore_index=True).value_counts()
@@ -46,8 +46,11 @@ def remove_degree2_node_and_merge(degree2_node_id: int, edges: gpd.GeoDataFrame)
         logging.debug(f"Nodes {degree2_node_id} - there should be exactly two edges to merge, found {len(edge_ids_to_merge)}")
             # Suppression de l'unique arête trouvée
         edge_osmid_to_remove = edge_ids_to_merge[0]  # Obtenir l'ID 'osmid' de l'arête à supprimer
-        edge = edge[edge['osmid'] != edge_osmid_to_remove]  # Supprimer la ligne correspondant à cet 'osmid'
+        edges = edges[edges['osmid'] != edge_osmid_to_remove]  # Supprimer la ligne correspondant à cet 'osmid'
         logging.debug(f"Removed the only edge for node {degree2_node_id} with osmid {edge_osmid_to_remove}")
+        result = {"success": True,
+                  "log": f"Removed the only edge for node {degree2_node_id} with osmid {edge_osmid_to_remove}"}
+        return edges, result
     else:
         # merge the two edges
         multi_line = shapely.geometry.MultiLineString(
@@ -174,7 +177,7 @@ def merge_close_points(df_nodes, df_edges, R, min_samples=2):
     # logging.info(f"RAYON DE SIMPLIFICATION (epsi) : {epsi} mètres (epsi_min={epsi_min}, epsi_max={epsi_max})")
 
     # Apply DBSCAN clustering to the scaled coordinates
-    dbscan = DBSCAN(eps=R*1000, min_samples=min_samples, metric='euclidean', algorithm='auto').fit(coords)
+    dbscan = DBSCAN(eps=R*1000, min_samples=min_samples, metric='euclidean', algorithm='auto', n_jobs=-1).fit(coords)
 
     # Assign cluster labels to the original node dataframe
     df_nodes_new = df_nodes.copy()
@@ -338,9 +341,14 @@ def simplification_B(files_folder, R=30, correction_connexe=True, output_folder=
                  os.path.isfile(os.path.join(os.path.join(files_folder), file))])
 
     for i in files:
-        edges = gpd.read_file(
+        # edges = gpd.read_file(
+        #     os.path.join(files_folder, i), layer=1)
+        # nodes = gpd.read_file(
+        #     os.path.join(files_folder, i), layer=0)
+        
+        edges = read_dataframe(
             os.path.join(files_folder, i), layer=1)
-        nodes = gpd.read_file(
+        nodes = read_dataframe(
             os.path.join(files_folder, i), layer=0)
 
         logging.info("Working on: " + str(i[:-5]))
@@ -458,7 +466,7 @@ def process_file(file, files_folder, R, correction_connexe, output_folder):
     
     if not os.path.exists(os.path.join(files_folder, "Done")):
         os.makedirs(os.path.join(files_folder, "Done"))
-    # shutil.move(os.path.join(files_folder, file), os.path.join(files_folder, "Done", file))
+    shutil.move(os.path.join(files_folder, file), os.path.join(files_folder, "Done", file))
 
 def simplification_B_par(files_folder, R=30, correction_connexe=True, output_folder=None):
     logging.info("SIMPLIFICATION B PHASE")

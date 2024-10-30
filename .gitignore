@@ -9,3 +9,4 @@ OSMsimp/__pycache__/
 run.py 
 run.sh
 OAR*
+OSMsimp/divers.py
