@@ -156,28 +156,8 @@ def merge_close_points(df_nodes, df_edges, R, min_samples=2):
     # scaler = StandardScaler().fit(coords)
     # coords_scaled = scaler.transform(coords)
 
-    # # Calculer les longueurs des arêtes
-    # df_edges['length'] = df_edges.geometry.length
-
-    # # Calculer des statistiques sur les longueurs des arêtes
-    # median_edge_length = df_edges['length'].median()
-    # min_edge_length = df_edges['length'].min()
-    # max_edge_length = df_edges['length'].max()
-
-    # # Définir epsi_min et epsi_max en fonction des longueurs des arêtes
-    # epsi_min = min_edge_length * 0.5  # Par exemple, la moitié de la plus petite arête
-    # epsi_max = median_edge_length * 2  # Par exemple, deux fois la longueur médiane des arêtes
-
-    # # Assurer que epsi_min est positif et inférieur à epsi_max
-    # epsi_min = max(epsi_min, 1e-10)
-    # epsi_max = max(epsi_max, epsi_min * 1.1)  # Assurer que epsi_max > epsi_min
-
-    # Calculer epsi en fonction du paramètre normalisé p
-    # epsi = epsi_min + p * (epsi_max - epsi_min)
-    # logging.info(f"RAYON DE SIMPLIFICATION (epsi) : {epsi} mètres (epsi_min={epsi_min}, epsi_max={epsi_max})")
-
     # Apply DBSCAN clustering to the scaled coordinates
-    dbscan = DBSCAN(eps=R*1000, min_samples=min_samples, metric='euclidean', algorithm='auto', n_jobs=-1).fit(coords)
+    dbscan = DBSCAN(eps=R*1000, min_samples=min_samples, metric='euclidean', algorithm='kd_tree', n_jobs=1).fit(coords)
 
     # Assign cluster labels to the original node dataframe
     df_nodes_new = df_nodes.copy()
@@ -187,7 +167,8 @@ def merge_close_points(df_nodes, df_edges, R, min_samples=2):
     # and creating a new GeoDataFrame with the merged Point geometries
     new_geoms = []
     new_index = []
-    for i in tqdm(np.unique(dbscan.labels_), desc='Merging nodes'):
+
+    for i in  tqdm(np.unique(dbscan.labels_), desc='Merging nodes'):
         if i == -1:
             df_nodes_new.loc[df_nodes_new['cluster'] == i, 'new index'] = df_nodes_new.loc[
                 df_nodes_new['cluster'] == i, 'osmid']
@@ -214,17 +195,32 @@ def merge_close_points(df_nodes, df_edges, R, min_samples=2):
     new_nodes_t = new_nodes.loc[new_nodes["cluster"] == -1].copy()
 
     # Créer la barre de progression avec progressbar2
-    bar = progressbar.ProgressBar(maxval=len(df_edges_new))
+    bar = progressbar.ProgressBar(maxval=len(df_edges_new), 
+                              widgets=[
+                                  'Fusion des clusters : ', progressbar.SimpleProgress(),
+                                  ' (', progressbar.Percentage(), ') ',
+                                  progressbar.Bar(), ' ', progressbar.ETA()
+                              ])
+    
+    # Préparer une liste pour les nouvelles géométries
+    new_geometries = []
 
     # Utiliser la barre de progression dans la boucle
-    for u, v in bar(zip(df_edges_new['u'], df_edges_new['v'])):
-        df_edges_new['geometry'] = [
-            LineString([
-                new_nodes_t.loc[new_nodes_t["new index"] == u, "geometry"].values[0],
-                new_nodes_t.loc[new_nodes_t["new index"] == v, "geometry"].values[0]
-            ])
-            for u, v in zip(df_edges_new['u'], df_edges_new['v'])
-        ]
+    for idx, (u, v) in enumerate(bar(zip(df_edges_new['u'], df_edges_new['v']))):
+        # df_edges_new['geometry'] = [
+        #     LineString([
+        #         new_nodes_t.loc[new_nodes_t["new index"] == u, "geometry"].values[0],
+        #         new_nodes_t.loc[new_nodes_t["new index"] == v, "geometry"].values[0]
+        #     ])
+        #     for u, v in zip(df_edges_new['u'], df_edges_new['v'])
+        # ]
+        geom_u = new_nodes_t.loc[new_nodes_t["new index"] == u, "geometry"].values[0]
+        geom_v = new_nodes_t.loc[new_nodes_t["new index"] == v, "geometry"].values[0]
+        line = LineString([geom_u, geom_v])
+        new_geometries.append(line)
+        bar.update(idx + 1)
+    # Préparer une liste pour les nouvelles géométries
+    df_edges_new['geometry'] = new_geometries
     new_nodes_t.drop(columns=['osmid'], inplace=True)
     new_nodes_t = new_nodes_t.rename(columns={'new index': 'osmid'})
     return new_nodes_t, df_edges_new
