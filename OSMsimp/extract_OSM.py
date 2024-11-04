@@ -8,19 +8,122 @@ from esy.osmfilter import export_geojson
 import shutil
 import logging
 
+prefilter_dict = {1: {      Node: {},
+                            Way: {"highway": ["motorway", "motorway_link", "trunk", "trunk_link"]},
+                            Relation: {}
+                        },
+                   2: {
+                        Node: {},
+                        Way: {
+                            "highway": [
+                                "motorway", "motorway_link",
+                                "trunk", "trunk_link",
+                                "primary", "primary_link",
+                                "secondary", "secondary_link"
+                            ]
+                        },
+                        Relation: {}
+                    },
+                    3: {
+                        Node: {},
+                        Way: {
+                            "highway": [
+                                "motorway", "motorway_link",
+                                "trunk", "trunk_link",
+                                "primary", "primary_link",
+                                "secondary", "secondary_link",
+                                "tertiary", "tertiary_link"
+                            ]
+                        },
+                        Relation: {}
+                    }
+    }
 
-def extract_from_PBF(input_folder, prefilter=None,
-                     whitefilter=None, blackfilter=None):
+whitefilter_dict = {1: [
+                            [("highway", "motorway")],
+                            [("highway", "motorway_link")],
+                            [("highway", "trunk")],
+                            [("highway", "trunk_link")]
+                        ],
+                    2: [
+                        [("highway", "motorway")],
+                        [("highway", "motorway_link")],
+                        [("highway", "trunk")],
+                        [("highway", "trunk_link")],
+                        [("highway", "primary")],
+                        [("highway", "primary_link")],
+                        [("highway", "secondary")],
+                        [("highway", "secondary_link")]
+                    ],
+                    3: [
+                        [("highway", "motorway")],
+                        [("highway", "motorway_link")],
+                        [("highway", "trunk")],
+                        [("highway", "trunk_link")],
+                        [("highway", "primary")],
+                        [("highway", "primary_link")],
+                        [("highway", "secondary")],
+                        [("highway", "secondary_link")],
+                        [("highway", "tertiary")],
+                        [("highway", "tertiary_link")]
+                    ]
+    }
+
+blackfilter_dict = {1: [("highway", "primary"), ("highway", "secondary")],
+                    2: [
+                        ("highway", "tertiary"),
+                        ("highway", "tertiary_link"),
+                        ("highway", "unclassified"),
+                        ("highway", "residential"),
+                        ("highway", "service"),
+                        ("highway", "living_street"),
+                        ("highway", "pedestrian"),
+                        ("highway", "track"),
+                        ("highway", "road"),
+                        ("highway", "path"),
+                        ("highway", "footway"),
+                        ("highway", "cycleway"),
+                        ("highway", "steps"),
+                        ("highway", "construction"),
+                        ("highway", "bus_guideway"),
+                        ("highway", "escape"),
+                        ("highway", "raceway"),
+                        ("highway", "bridleway"),
+                        ("highway", "corridor"),
+                        ("highway", "proposed"),
+                        ("highway", "motorway_junction"),
+                        ("highway", "platform")
+                    ],
+                    3: [
+                        ("highway", "unclassified"),
+                        ("highway", "residential"),
+                        ("highway", "service"),
+                        ("highway", "living_street"),
+                        ("highway", "pedestrian"),
+                        ("highway", "track"),
+                        ("highway", "road"),
+                        ("highway", "path"),
+                        ("highway", "footway"),
+                        ("highway", "cycleway"),
+                        ("highway", "steps"),
+                        ("highway", "construction"),
+                        ("highway", "bus_guideway"),
+                        ("highway", "escape"),
+                        ("highway", "raceway"),
+                        ("highway", "bridleway"),
+                        ("highway", "corridor"),
+                        ("highway", "proposed"),
+                        ("highway", "motorway_junction"),
+                        ("highway", "platform")
+                    ]
+    }
+
+def extract_from_PBF(input_folder, level=2):
     logging.info("EXTRACT DATA FROM PBF FILES")
     print("EXTRACT DATA FROM PBF FILES")
-    if prefilter is None:
-        prefilter = {Node: {}, Way: {
-            "highway": ["motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link"], }, Relation: {}}
-    if whitefilter is None:
-        whitefilter = [(("highway", "trunk"),), (("highway", "trunk_link"),), (("highway", "motorway"),),
-                       (("highway", "motorway_link"),)]
-    if blackfilter is None:
-        blackfilter = [("highway", "secondary")]
+    prefilter = prefilter_dict[level]
+    whitefilter = whitefilter_dict[level]
+    blackfilter = blackfilter_dict[level]
     for file in [file for file in os.listdir(input_folder) if os.path.isfile(os.path.join(input_folder, file))]:
         logging.info("Processed file: " + str(file))
         print("Processed file: " + str(file))
@@ -57,6 +160,6 @@ def extract_from_PBF(input_folder, prefilter=None,
                        filename=os.path.join(output_folder, file[:-15] + '_nodes.geojson'),
                        jsontype='Point')
 
-        if not os.path.exists(os.path.join(input_folder, "Done")):
-            os.makedirs(os.path.join(input_folder, "Done"))
-        shutil.move(os.path.join(input_folder, file), os.path.join(input_folder, "Done", file))
+        # if not os.path.exists(os.path.join(input_folder, "Done")):
+        #     os.makedirs(os.path.join(input_folder, "Done"))
+        # shutil.move(os.path.join(input_folder, file), os.path.join(input_folder, "Done", file))
