@@ -16,13 +16,13 @@ def merge_geodataframes(geodataframes, distance_threshold=100):
 
     # Merge all the nodes into a single GeoDataFrame
     for nodes, _ in geodataframes:
-        merged_nodes = merged_nodes.append(nodes)
-    merged_nodes = merged_nodes.to_crs(crs='4087')
+        nodes = nodes.to_crs(crs='4087')
+        merged_nodes = pd.concat([merged_nodes, nodes], ignore_index=True)
 
     # Merge all the edges into a single GeoDataFrame
     for _, edges in geodataframes:
-        merged_edges = merged_edges.append(edges)
-    merged_edges = merged_edges.to_crs(crs='4087')
+        edges = edges.to_crs(crs='4087')
+        merged_edges = pd.concat([merged_edges, edges], ignore_index=True)
 
     # Create a new GeoDataFrame to store the connected edges
     connected_edges = gpd.GeoDataFrame(columns=merged_nodes.columns)
