@@ -18,7 +18,7 @@ from sklearn.neighbors import BallTree
 import shutil
 from scipy.spatial.distance import pdist
 import pyproj
-from .makegraphconnected import make_graph_connected
+from makegraphconnected import make_graph_connected
 from concurrent.futures import ThreadPoolExecutor
 from pyogrio import read_dataframe
 
@@ -148,7 +148,6 @@ def merge_close_points(df_nodes, df_edges, R, min_samples=2):
     df_nodes, epsg_code = project_to_utm(df_nodes)
     df_edges = df_edges.set_crs(epsg=4326)
     df_edges = df_edges.to_crs(epsg=epsg_code)
-    # print(df_edges.crs, df_nodes.crs)
     # Convert the node geometries to 2D numpy array for clustering
     coords = np.vstack(df_nodes.geometry.apply(lambda x: (x.x, x.y)).values)
 
@@ -168,62 +167,168 @@ def merge_close_points(df_nodes, df_edges, R, min_samples=2):
     new_geoms = []
     new_index = []
 
-    for i in  tqdm(np.unique(dbscan.labels_), desc='Merging nodes'):
+    # Ajouter une colonne pour conserver la géométrie originale des nœuds
+    df_nodes['original_geometry'] = df_nodes['geometry']
+
+    # Copier df_nodes pour travailler sur une nouvelle version
+    df_nodes_new = df_nodes.copy()
+
+    # Supposons que 'dbscan.labels_' contienne les étiquettes des clusters après clustering
+    # Ajouter les labels de cluster aux nœuds
+    df_nodes_new['cluster'] = dbscan.labels_
+
+    # Initialiser les listes pour les nouveaux nœuds (centroïdes)
+    new_geoms = []
+    new_index = []
+
+    # Parcourir les clusters pour fusionner les nœuds
+    for i in tqdm(np.unique(dbscan.labels_), desc='Merging nodes'):
         if i == -1:
-            df_nodes_new.loc[df_nodes_new['cluster'] == i, 'new index'] = df_nodes_new.loc[
-                df_nodes_new['cluster'] == i, 'osmid']
+            # Nœuds qui ne font pas partie d'un cluster
+            df_nodes_new.loc[df_nodes_new['cluster'] == i, 'new index'] = df_nodes_new.loc[df_nodes_new['cluster'] == i, 'osmid']
         else:
-            cluster_points = df_nodes_new.loc[df_nodes_new['cluster'] == i, 'geometry']
-            df_nodes_new.loc[df_nodes_new['cluster'] == i, 'new index'] = int(i + len(df_nodes_new))
-            cluster_points = MultiPoint([Point(xy) for xy in cluster_points.geometry.values])
+            # Nœuds à fusionner
+            cluster_nodes = df_nodes_new.loc[df_nodes_new['cluster'] == i]
+            new_node_id = int(i + len(df_nodes_new))
+            df_nodes_new.loc[df_nodes_new['cluster'] == i, 'new index'] = new_node_id
+            # Calculer le centroïde du cluster
+            cluster_points = MultiPoint(cluster_nodes['geometry'].tolist())
             centroid = cluster_points.centroid
             new_geoms.append(centroid)
-            new_index.append(len(df_nodes_new) + i)
-    d = {"id": new_index, "new index": new_index, "cluster": [-1 for i in range(len(new_index))], "geometry": new_geoms}
-    merged_nodes = gpd.GeoDataFrame(d, crs=df_nodes.crs)  # geometry=new_geoms
-    new_nodes = pd.concat([df_nodes_new, merged_nodes])  # df_nodes_new.append(merged_nodes)
+            new_index.append(new_node_id)
+
+    # Créer un GeoDataFrame pour les nouveaux nœuds (centroïdes)
+    d = {
+        "id": new_index,
+        "new index": new_index,
+        "cluster": [-1 for _ in range(len(new_index))],
+        "geometry": new_geoms,
+        "original_geometry": new_geoms  # Pour les centroïdes, la géométrie originale est le centroïde
+    }
+    merged_nodes = gpd.GeoDataFrame(d, crs=df_nodes.crs)
+
+    # Combiner les nœuds originaux et les nouveaux nœuds (centroïdes)
+    new_nodes = pd.concat([df_nodes_new, merged_nodes], ignore_index=True)
+
+    # Assurer que les types de données sont corrects
     new_nodes = new_nodes.astype({"new index": int})
     new_nodes['osmid'].fillna(-1, inplace=True)
     new_nodes = new_nodes.astype({"osmid": int})
 
+    # Copier df_edges pour travailler sur une nouvelle version
     df_edges_new = df_edges.copy()
 
+    # Créer un dictionnaire de mappage des anciens identifiants de nœuds vers les nouveaux
     node_map = dict(zip(new_nodes['osmid'], new_nodes['new index']))
+    #Suppression des noeuds qui ont été fusionné
+    new_nodes = new_nodes.loc[new_nodes["cluster"] == -1].copy()
+    # Mettre à jour les colonnes 'u' et 'v' avec les nouveaux identifiants
     df_edges_new['u'] = df_edges_new['u'].map(node_map).fillna(df_edges_new['u'])
     df_edges_new['v'] = df_edges_new['v'].map(node_map).fillna(df_edges_new['v'])
 
-    new_nodes_t = new_nodes.loc[new_nodes["cluster"] == -1].copy()
-
-    # Créer la barre de progression avec progressbar2
-    bar = progressbar.ProgressBar(maxval=len(df_edges_new), 
-                              widgets=[
-                                  'Fusion des clusters : ', progressbar.SimpleProgress(),
-                                  ' (', progressbar.Percentage(), ') ',
-                                  progressbar.Bar(), ' ', progressbar.ETA()
-                              ])
-    
-    # Préparer une liste pour les nouvelles géométries
+    # Préparer une liste pour les nouvelles géométries des arêtes
     new_geometries = []
 
-    # Utiliser la barre de progression dans la boucle
-    for idx, (u, v) in enumerate(bar(zip(df_edges_new['u'], df_edges_new['v']))):
-        # df_edges_new['geometry'] = [
-        #     LineString([
-        #         new_nodes_t.loc[new_nodes_t["new index"] == u, "geometry"].values[0],
-        #         new_nodes_t.loc[new_nodes_t["new index"] == v, "geometry"].values[0]
-        #     ])
-        #     for u, v in zip(df_edges_new['u'], df_edges_new['v'])
-        # ]
-        geom_u = new_nodes_t.loc[new_nodes_t["new index"] == u, "geometry"].values[0]
-        geom_v = new_nodes_t.loc[new_nodes_t["new index"] == v, "geometry"].values[0]
-        line = LineString([geom_u, geom_v])
-        new_geometries.append(line)
+    # Créer une barre de progression
+    bar = progressbar.ProgressBar(maxval=len(df_edges_new), 
+                                widgets=[
+                                    'Mise à jour des arêtes : ', progressbar.SimpleProgress(),
+                                    ' (', progressbar.Percentage(), ') ',
+                                    progressbar.Bar(), ' ', progressbar.ETA()
+                                ])
+
+    # Parcourir les arêtes pour ajuster les géométries
+    for idx, row in bar(df_edges_new.iterrows()):
+        u = row['u']
+        v = row['v']
+        edge_geom = row['geometry']
+
+        # Récupérer les informations des nœuds 'u' et 'v'
+        u_row = new_nodes.loc[new_nodes['new index'] == u].iloc[0]
+        v_row = new_nodes.loc[new_nodes['new index'] == v].iloc[0]
+
+        # Déterminer si les nœuds ont été fusionnés
+        u_has_moved = u_row['osmid'] != u_row['new index']
+        v_has_moved = v_row['osmid'] != v_row['new index']
+
+        # Géométries nouvelles et originales des nœuds
+        u_new_geom = u_row['geometry']
+        v_new_geom = v_row['geometry']
+        u_original_geom = u_row['original_geometry']
+        v_original_geom = v_row['original_geometry']
+
+        # Fonction pour ajuster la géométrie de l'arête
+        def adjust_edge_geometry(edge_geometry, u_old_geom, u_new_geom, u_has_moved, 
+                                v_old_geom, v_new_geom, v_has_moved):
+            coords = list(edge_geometry.coords)
+            # Ajuster le point de départ
+            if u_has_moved:
+                coords[0] = (u_new_geom.x, u_new_geom.y)
+            # Ajuster le point d'arrivée
+            if v_has_moved:
+                coords[-1] = (v_new_geom.x, v_new_geom.y)
+            return LineString(coords)
+
+        # Ajuster la géométrie de l'arête
+        adjusted_geom = adjust_edge_geometry(edge_geom, u_original_geom, u_new_geom, u_has_moved,
+                                            v_original_geom, v_new_geom, v_has_moved)
+        new_geometries.append(adjusted_geom)
         bar.update(idx + 1)
-    # Préparer une liste pour les nouvelles géométries
+
+    # Mettre à jour les géométries des arêtes
     df_edges_new['geometry'] = new_geometries
-    new_nodes_t.drop(columns=['osmid'], inplace=True)
-    new_nodes_t = new_nodes_t.rename(columns={'new index': 'osmid'})
-    return new_nodes_t, df_edges_new
+
+    # for i in  tqdm(np.unique(dbscan.labels_), desc='Merging nodes'):
+    #     if i == -1:
+    #         df_nodes_new.loc[df_nodes_new['cluster'] == i, 'new index'] = df_nodes_new.loc[
+    #             df_nodes_new['cluster'] == i, 'osmid']
+    #     else:
+    #         cluster_points = df_nodes_new.loc[df_nodes_new['cluster'] == i, 'geometry']
+    #         df_nodes_new.loc[df_nodes_new['cluster'] == i, 'new index'] = int(i + len(df_nodes_new))
+    #         cluster_points = MultiPoint([Point(xy) for xy in cluster_points.geometry.values])
+    #         centroid = cluster_points.centroid
+    #         new_geoms.append(centroid)
+    #         new_index.append(len(df_nodes_new) + i)
+    # d = {"id": new_index, "new index": new_index, "cluster": [-1 for i in range(len(new_index))], "geometry": new_geoms}
+    # merged_nodes = gpd.GeoDataFrame(d, crs=df_nodes.crs)  # geometry=new_geoms
+    # new_nodes = pd.concat([df_nodes_new, merged_nodes])  # df_nodes_new.append(merged_nodes)
+    # new_nodes = new_nodes.astype({"new index": int})
+    # new_nodes['osmid'].fillna(-1, inplace=True)
+    # new_nodes = new_nodes.astype({"osmid": int})
+
+    # df_edges_new = df_edges.copy()
+
+    # node_map = dict(zip(new_nodes['osmid'], new_nodes['new index']))
+    # df_edges_new['u'] = df_edges_new['u'].map(node_map).fillna(df_edges_new['u'])
+    # df_edges_new['v'] = df_edges_new['v'].map(node_map).fillna(df_edges_new['v'])
+
+    # new_nodes_t = new_nodes.loc[new_nodes["cluster"] == -1].copy()
+
+    # # Créer la barre de progression avec progressbar2
+    # bar = progressbar.ProgressBar(maxval=len(df_edges_new), 
+    #                           widgets=[
+    #                               'Fusion des clusters : ', progressbar.SimpleProgress(),
+    #                               ' (', progressbar.Percentage(), ') ',
+    #                               progressbar.Bar(), ' ', progressbar.ETA()
+    #                           ])
+    
+    # # Préparer une liste pour les nouvelles géométries
+    # new_geometries = []
+
+    # # Utiliser la barre de progression dans la boucle
+    # for idx, (u, v) in enumerate(bar(zip(df_edges_new['u'], df_edges_new['v']))):
+    #     geom_u = new_nodes_t.loc[new_nodes_t["new index"] == u, "geometry"].values[0]
+    #     geom_v = new_nodes_t.loc[new_nodes_t["new index"] == v, "geometry"].values[0]
+    #     line = LineString([geom_u, geom_v])
+    #     new_geometries.append(line)
+    #     bar.update(idx + 1)
+    # # Préparer une liste pour les nouvelles géométries
+    # df_edges_new['geometry'] = new_geometries
+    # new_nodes_t.drop(columns=['osmid'], inplace=True)
+    # new_nodes_t = new_nodes_t.rename(columns={'new index': 'osmid'})
+    new_nodes.drop(columns=['osmid', 'original_geometry'], inplace=True)
+    new_nodes = new_nodes.rename(columns={'new index': 'osmid'})
+    return new_nodes, df_edges_new
 
 
 def remove_duplicate_rows(gdf):
@@ -330,7 +435,7 @@ def remove_useless_nodes(edges, nodes):
     return edges, nodes, len(degree2_nodes), N_same_start_end
 
 
-def simplification_B(files_folder, R=30, correction_connexe=True, output_folder=None):
+def simplification_B(files_folder, R=5, correction_connexe=True, output_folder=None):
     logging.info("SIMPLIFICATION B PHASE")
     # files_folder = os.path.join(os.path.dirname(files_folder), "simp_A")
     files = set([file for file in os.listdir(os.path.join(files_folder)) if

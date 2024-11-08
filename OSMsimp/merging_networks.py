@@ -1,5 +1,6 @@
 import os
 import geopandas as gpd
+import pandas as pd
 from tqdm.auto import tqdm
 import numpy as np
 from shapely.geometry import Point, LineString
@@ -8,9 +9,19 @@ from pyogrio import write_dataframe
 from sklearn.neighbors import BallTree
 import logging
 from itertools import combinations
+import warnings
 
 
-def merge_geodataframes(geodataframes, distance_threshold=100):
+def calculate_adaptive_threshold(merged_nodes):
+    # Calculer les distances aux nœuds les plus proches
+    distances = merged_nodes.geometry.apply(
+        lambda geom: merged_nodes.distance(geom).nsmallest(2).iloc[-1]
+    )
+    # Calculer le 95ᵉ percentile
+    threshold = distances.quantile(0.05)
+    return threshold*1.3
+
+def merge_geodataframes(geodataframes, distance_threshold=None):
     merged_nodes = gpd.GeoDataFrame()
     merged_edges = gpd.GeoDataFrame()
 
@@ -33,6 +44,10 @@ def merge_geodataframes(geodataframes, distance_threshold=100):
         source_nodes = source_nodes.to_crs("EPSG:4087")
         target_nodes = target_nodes.to_crs("EPSG:4087")
 
+        if distance_threshold == None:
+            distance_threshold = calculate_adaptive_threshold(merged_nodes)
+        # logging.info(f"Distance_treshold : {distance_threshold}")
+        print(f"Distance_treshold : {distance_threshold}")
         for _, source_node in source_nodes.iterrows():
             # Transform the source node geometry to CRS 4087
             source_node_geometry = source_node.geometry  # .to_crs("EPSG:4087")
@@ -49,12 +64,13 @@ def merge_geodataframes(geodataframes, distance_threshold=100):
                         'geometry': [LineString([source_node.geometry, target_node.geometry])]
                     }
                 )
-                connected_edges = connected_edges.append(connected_edge)
-
+                # connected_edges = connected_edges.append(connected_edge)
+                connected_edges = pd.concat([connected_edges, connected_edge], ignore_index=True)
     # Project the connected edges and merged nodes back to CRS 4326
     # connected_edges = connected_edges.to_crs("EPSG:4326")
 
-    merged_edges = merged_edges.append(connected_edges)
+    # merged_edges = merged_edges.append(connected_edges)
+    merged_edges = pd.concat([merged_edges, connected_edges], ignore_index=True)
     merged_edges = merged_edges.to_crs("EPSG:4326")
     merged_nodes = merged_nodes.to_crs("EPSG:4326")
 
@@ -100,9 +116,9 @@ def assignEndpoints(df_links, df_nodes):
     df_links['end2'] = idClosestPointsArray[:, 1]
     return df_links.astype({'end1': int, 'end2': int})
 
-def merge_networks(input_folder, bloc_name = "bloc", threshold=50000):
+def merge_networks(input_folder, bloc_name = "bloc", threshold=None):
     logging.info("MERGING NETWORKS")
-    input_folder = os.path.join(os.path.dirname(input_folder), "simp_B")
+    # input_folder = os.path.join(os.path.dirname(input_folder), "simp_B")
     gdf_edges = [file for file in os.listdir(os.path.join(input_folder)) if
                  (os.path.isfile(os.path.join(os.path.join(input_folder), file)) & ("edges" in file))]
     gdf_nodes = [file for file in os.listdir(os.path.join(input_folder)) if
@@ -113,9 +129,14 @@ def merge_networks(input_folder, bloc_name = "bloc", threshold=50000):
     geodataframes = []
 
     for i in range(len(gdf_edges)):
-        nodes = read_dataframe(os.path.join(input_folder, gdf_nodes[i]))
-        edges = read_dataframe(os.path.join(input_folder, gdf_edges[i]))
-        geodataframes.append((nodes, edges))
+        # nodes = read_dataframe(os.path.join(input_folder, gdf_nodes[i]))
+        # edges = read_dataframe(os.path.join(input_folder, gdf_edges[i]))
+        # Masquer temporairement les avertissements de Fiona lors de la lecture du fichier
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=UserWarning, module="fiona")
+            nodes = gpd.read_file(os.path.join(input_folder, gdf_nodes[i]))#, ignore_fields=["osmid_original"])
+            edges = gpd.read_file(os.path.join(input_folder, gdf_edges[i]))#, ignore_fields=["osmid_original"])
+            geodataframes.append((nodes, edges))
 
     merged_nodes, merged_edges = merge_geodataframes(geodataframes, distance_threshold=threshold)
     merged_edges = addKm(merged_edges, 4087)
