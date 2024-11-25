@@ -18,9 +18,11 @@ from sklearn.neighbors import BallTree
 import shutil
 from scipy.spatial.distance import pdist
 import pyproj
-from makegraphconnected import make_graph_connected
+from OSMsimp.makegraphconnected import make_graph_connected
 from concurrent.futures import ThreadPoolExecutor
 from pyogrio import read_dataframe
+from shapely.ops import split
+import itertools
 
 def get_degree1_nodes(nodes: gpd.GeoDataFrame, edges: gpd.GeoDataFrame) -> list:
     node_occurrence_as_start_end = pd.concat([edges['u'], edges['v']], axis=0, ignore_index=True).value_counts()
@@ -326,15 +328,146 @@ def merge_close_points(df_nodes, df_edges, R, min_samples=2):
     # df_edges_new['geometry'] = new_geometries
     # new_nodes_t.drop(columns=['osmid'], inplace=True)
     # new_nodes_t = new_nodes_t.rename(columns={'new index': 'osmid'})
-    new_nodes.drop(columns=['osmid', 'original_geometry'], inplace=True)
+    new_nodes.drop(columns=['osmid', 'original_geometry', 'osmid_original'], inplace=True)
     new_nodes = new_nodes.rename(columns={'new index': 'osmid'})
     return new_nodes, df_edges_new
 
+def split_line_at_point(line, point):
+    # # Vérifier que le point est bien de type Point et sur la ligne
+    # if not isinstance(point, Point) or not (line.contains(point) or line.touches(point)):
+    #     # Si le point n'est pas sur la ligne, on retourne la ligne sans la diviser
+    #     return [line]
+
+    # Trouver la distance le long de la ligne jusqu'au point d'intersection
+    distance = line.project(point)
+
+    # Vérifier si le point est au début ou à la fin du LineString, alors pas de division nécessaire
+    if distance <= 0.0 or distance >= line.length:
+        return [line]
+
+    # Interpoler le point d'intersection pour garantir qu'il est sur la ligne
+    interpolated_point = line.interpolate(distance)
+    coords = list(line.coords)
+
+    # Créer deux nouveaux segments en divisant au point interpolé
+    segment1 = []
+    segment2 = []
+    point_added = False
+
+    for coord in coords:
+        if not point_added and LineString([coord, coords[coords.index(coord)+1]]).distance(interpolated_point) < 1e-6:
+            # Ajouter jusqu'à l'interpolated_point pour le premier segment
+            segment1.append(coord)
+            segment1.append((interpolated_point.x, interpolated_point.y))
+            segment2.append((interpolated_point.x, interpolated_point.y))
+            point_added = True
+        elif not point_added:
+            segment1.append(coord)
+        else:
+            segment2.append(coord)
+
+    # Créer les nouveaux LineStrings à partir des segments
+    line1 = LineString(segment1)
+    line2 = LineString(segment2)
+
+    return [line1, line2]
+
+def planarize_graph(nodes, edges):
+    """
+    Planarise un graphe en ajoutant des nœuds aux intersections d'arêtes
+    qui ne sont pas déjà des nœuds. Divise les arêtes aux points d'intersection
+    et met à jour les colonnes 'u' et 'v'.
+    
+    Paramètres :
+    - nodes : GeoDataFrame des nœuds avec une colonne 'geometry' de Points et un identifiant 'id'.
+    - edges : GeoDataFrame des arêtes avec des colonnes 'u', 'v', et 'geometry' (LineString).
+    
+    Retourne :
+    - new_nodes : GeoDataFrame des nœuds mis à jour avec les nouveaux nœuds ajoutés.
+    - new_edges : GeoDataFrame des arêtes mises à jour avec les arêtes divisées et les colonnes 'u' et 'v' mises à jour.
+    """
+    
+    # Copier les nœuds et arêtes pour ne pas modifier les originaux
+    nodes = nodes.copy()
+    edges = edges.copy()
+
+    # Liste pour stocker les nouvelles arêtes divisées
+    new_edges = []
+    
+    # Variable pour générer des identifiants uniques pour les nouveaux nœuds
+    max_node_id = nodes['osmid'].max() if 'id' in nodes.columns else nodes.index.max()
+    
+    # Détection des intersections entre toutes les paires d'arêtes
+    for i, edge1 in edges.iterrows():
+        for j, edge2 in edges.iterrows():
+            if i >= j:
+                continue  # Éviter les doublons et les auto-intersections
+
+            # Vérifier s'il y a une intersection entre les deux arêtes
+            intersection = edge1.geometry.intersection(edge2.geometry)
+            
+            # Vérifier si l'intersection est non vide et est un Point ou MultiPoint
+            if isinstance(intersection, (Point, MultiPoint)) and not intersection.is_empty:
+                # Si c'est un seul point, le convertir en liste pour un traitement uniforme
+                intersection_points = [intersection] if isinstance(intersection, Point) else list(intersection.geoms)
+
+                # Parcourir chaque point d'intersection
+                for point in intersection_points:
+                    # Vérifier si le point est aux extrémités de l'une des arêtes
+                    if point.equals(Point(edge1.geometry.coords[0])) or point.equals(Point(edge1.geometry.coords[-1])) or \
+                    point.equals(Point(edge2.geometry.coords[0])) or point.equals(Point(edge2.geometry.coords[-1])):
+                        continue  # Ignorer les points aux extrémités
+                    # Ajouter l'intersection comme nouveau nœud
+                    max_node_id += 1
+                    new_node = {'id': max_node_id, 'geometry': point}
+                    nodes = pd.concat([nodes, gpd.GeoDataFrame([new_node], crs=nodes.crs)], ignore_index=True)
+
+                    # Diviser les deux arêtes à l'intersection
+                    split_edge1_segments = split_line_at_point(edge1.geometry, point)
+                    split_edge2_segments = split_line_at_point(edge2.geometry, point)
+
+                    # Créer de nouvelles arêtes pour edge1 divisée
+                    u = edge1['u']
+                    for segment in split_edge1_segments:
+                        if not segment.is_empty:
+                            # Déterminer v
+                            if segment.coords[-1] == (point.x, point.y):
+                                v = max_node_id
+                            else:
+                                v = edge1['v']
+                            new_edges.append({'u': u, 'v': v, 'geometry': segment})
+                            u = v  # Mettre à jour u pour le prochain segment
+
+                    # Faire de même pour edge2
+                    u = edge2['u']
+                    for segment in split_edge2_segments:
+                        if not segment.is_empty:
+                            if segment.coords[-1] == (point.x, point.y):
+                                v = max_node_id
+                            else:
+                                v = edge2['v']
+                            new_edges.append({'u': u, 'v': v, 'geometry': segment})
+                            u = v
+
+            else:
+                # Si pas d'intersection, conserver les arêtes originales
+                new_edges.append(edge1)
+                new_edges.append(edge2)
+
+    # Créer le GeoDataFrame final des arêtes divisées avec u et v mis à jour
+    new_edges = [edge.to_dict() if isinstance(edge, pd.Series) else edge for edge in new_edges]
+    new_edges_df = gpd.GeoDataFrame(new_edges, geometry='geometry', crs=edges.crs)
+    
+    # Enlever les doublons d'arêtes
+    new_edges_df = new_edges_df.drop_duplicates(subset=['geometry'])
+    nodes['osmid'] = nodes['osmid'].fillna(nodes['id'])
+    nodes['id'] = nodes['id'].fillna(nodes['osmid'])
+
+    return nodes.reset_index(drop=True), new_edges_df.reset_index(drop=True)
 
 def remove_duplicate_rows(gdf):
     # Create a copy of the GeoDataFrame
     unique_gdf = gdf.copy()
-
     # Sort 'u' and 'v' columns to make them interchangeable
     unique_gdf[['u', 'v']] = unique_gdf[['u', 'v']].apply(lambda row: sorted(row), axis=1, result_type='expand')
 
@@ -442,11 +575,6 @@ def simplification_B(files_folder, R=5, correction_connexe=True, output_folder=N
                  os.path.isfile(os.path.join(os.path.join(files_folder), file))])
 
     for i in files:
-        # edges = gpd.read_file(
-        #     os.path.join(files_folder, i), layer=1)
-        # nodes = gpd.read_file(
-        #     os.path.join(files_folder, i), layer=0)
-        
         edges = read_dataframe(
             os.path.join(files_folder, i), layer=1)
         nodes = read_dataframe(
@@ -454,18 +582,31 @@ def simplification_B(files_folder, R=5, correction_connexe=True, output_folder=N
 
         logging.info("Working on: " + str(i[:-5]))
         print_nb_edges_nodes(edges, nodes)
+        if len(nodes) < 10:
+            #C'est pas très propre comme critère... En fait le graphe est réduit à 0 si il n'est fait que de noeuds de degre 2 ou 3...
+            # Cast types (seems to create pb in exporting otherwise)
+            edges['u'] = edges['u'].astype(int)
+            edges['v'] = edges['v'].astype(int)
+            nodes['osmid'] = nodes['osmid'].astype(int)
 
-        N_same_start_end = 1
-        num_degree_2 = 1
-        while num_degree_2 > 0 or N_same_start_end > 0:
-            edges, nodes, num_degree_2, N_same_start_end = remove_useless_nodes(edges, nodes)
+            # Remove edges which have the same start and end nodes (seems to happen in edges that are disconnected from the main network)
+            boolean_same_start_end = edges['u'] == edges['v']
+            N_same_start_end = len(edges[boolean_same_start_end])
+            # print(f'Removing {boolean_same_start_end.sum()} edges with same start and end nodes')
+            edges = edges[~boolean_same_start_end]
+            print_nb_edges_nodes(edges, nodes)
+        else:
+            N_same_start_end = 1
+            num_degree_2 = 1
+            while num_degree_2 > 0 or N_same_start_end > 0:
+                edges, nodes, num_degree_2, N_same_start_end = remove_useless_nodes(edges, nodes)
 
-        nodes["osmid"] = range(len(nodes["osmid"]))
-        edges = assignEndpoints(edges, nodes)
-        if correction_connexe:
-            nodes, edges = make_graph_connected(nodes, edges)
+            nodes["osmid"] = range(len(nodes["osmid"]))
+            edges = assignEndpoints(edges, nodes)
+            if correction_connexe:
+                nodes, edges = make_graph_connected(nodes, edges, 25e3)
 
-        nodes, edges = merge_close_points(nodes, edges, R=R, min_samples=2)
+            nodes, edges = merge_close_points(nodes, edges, R=R, min_samples=2)
 
         if len(nodes) < 10: #gestion du cas où la simplification est si forte qu'il ne reste qu'une quelques noeuds
             #C'est pas très propre comme critère... En fait le graphe est réduit à 0 si il n'est fait que de noeuds de degre 2 ou 3...
@@ -493,6 +634,7 @@ def simplification_B(files_folder, R=5, correction_connexe=True, output_folder=N
                     break
                 logging.debug("removing duplicate rows")
                 edges = remove_duplicate_rows(edges)
+                nodes, edges = planarize_graph(nodes, edges)
                 edges, nodes, num_degree_2, N_same_start_end = remove_useless_nodes(edges, nodes)
 
         # Export
@@ -509,7 +651,7 @@ def simplification_B(files_folder, R=5, correction_connexe=True, output_folder=N
             os.path.join(output_folder, i[:-5] + '_edges.geojson'), driver="GeoJSON")
         if not os.path.exists(os.path.join(files_folder, "Done")):
             os.makedirs(os.path.join(files_folder, "Done"))
-        shutil.move(os.path.join(files_folder, i), os.path.join(files_folder, "Done", i))
+        # shutil.move(os.path.join(files_folder, i), os.path.join(files_folder, "Done", i))
 
 
 #Version parralélisée
@@ -530,7 +672,7 @@ def process_file(file, files_folder, R, correction_connexe, output_folder):
     edges = assignEndpoints(edges, nodes)
     
     if correction_connexe:
-        nodes, edges = make_graph_connected(nodes, edges)
+        nodes, edges = make_graph_connected(nodes, edges, 25e3)
 
     nodes, edges = merge_close_points(nodes, edges, R=R, min_samples=2)
 

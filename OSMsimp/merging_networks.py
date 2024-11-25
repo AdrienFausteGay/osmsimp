@@ -12,6 +12,7 @@ from itertools import combinations
 import warnings
 
 
+
 def calculate_adaptive_threshold(merged_nodes):
     # Calculer les distances aux nœuds les plus proches
     distances = merged_nodes.geometry.apply(

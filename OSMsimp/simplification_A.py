@@ -74,7 +74,7 @@ def assignEndpoints(df_links, df_nodes):
 
 def simplification_A(input_folder):
     logging.info("SIMPLIFICATION A PHASE")
-    input_folder = os.path.join(os.path.dirname(input_folder), "raw_files")
+    # input_folder = os.path.join(os.path.dirname(input_folder), "raw_files")
     files = set([file[:-14] for file in os.listdir(os.path.join(input_folder)) if
                  os.path.isfile(os.path.join(os.path.join(input_folder), file))])
 

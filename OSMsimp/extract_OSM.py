@@ -160,6 +160,6 @@ def extract_from_PBF(input_folder, level=2):
                        filename=os.path.join(output_folder, file[:-15] + '_nodes.geojson'),
                        jsontype='Point')
 
-        # if not os.path.exists(os.path.join(input_folder, "Done")):
-        #     os.makedirs(os.path.join(input_folder, "Done"))
-        # shutil.move(os.path.join(input_folder, file), os.path.join(input_folder, "Done", file))
+        if not os.path.exists(os.path.join(input_folder, "Done")):
+            os.makedirs(os.path.join(input_folder, "Done"))
+        shutil.move(os.path.join(input_folder, file), os.path.join(input_folder, "Done", file))

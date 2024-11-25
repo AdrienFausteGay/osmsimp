@@ -5,14 +5,15 @@ from shapely.geometry import LineString
 from sklearn.neighbors import BallTree
 import numpy as np
 
-def make_graph_connected(nodes_df, edges_df):
+def make_graph_connected(nodes_df, edges_df, threshold = None):
     """
     Assure que le graphe défini par nodes_df et edges_df est connexe en ajoutant des arêtes
-    entre les nœuds les plus proches des composantes déconnectées.
+    entre les nœuds les plus proches des composantes déconnectées, sous réserve d'une distance maximale.
 
     Paramètres:
     - nodes_df: GeoDataFrame des nœuds, avec 'osmid' comme identifiant de nœud.
     - edges_df: GeoDataFrame des arêtes, avec 'u' et 'v' comme identifiants des nœuds d'extrémité.
+    - threshold: Distance maximale pour ajouter une arête (None pour ignorer la limite).
 
     Retourne:
     - nodes_df: GeoDataFrame des nœuds (inchangé).
@@ -88,8 +89,9 @@ def make_graph_connected(nodes_df, edges_df):
             idx_j = min_dist_idx
             node_i = nodes_i.iloc[idx_i]['osmid']
             node_j = nodes_j.iloc[idx_j]['osmid']
-            distances.append(min_dist)
-            pairs.append((node_i, node_j, min_dist))
+            if threshold is None or min_dist <= threshold:
+                pairs.append((node_i, node_j, min_dist))
+                distances.append(min_dist)
         
         # Trier les paires par distance croissante
         pairs = sorted(pairs, key=lambda x: x[2])
