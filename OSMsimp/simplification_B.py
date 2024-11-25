@@ -18,7 +18,7 @@ from sklearn.neighbors import BallTree
 import shutil
 from scipy.spatial.distance import pdist
 import pyproj
-from OSMsimp.makegraphconnected import make_graph_connected
+# from OSMsimp.makegraphconnected import make_graph_connected
 from concurrent.futures import ThreadPoolExecutor
 from pyogrio import read_dataframe
 from shapely.ops import split
@@ -534,7 +534,10 @@ def remove_useless_nodes(edges, nodes):
 
     # Remove nodes that are nowhere (can happen after the previous step)
     boolean_useless_nodes = ~nodes['osmid'].isin(edges['u']) & ~nodes['osmid'].isin(edges['v'])
-    # print(f'Removing {boolean_useless_nodes.sum()} nodes attached to no edges')
+    if boolean_useless_nodes.sum() == len(nodes):
+        # Tous les nœuds sont inutiles, conserver un nœud arbitraire
+        first_node_to_keep = nodes.iloc[0]['osmid']
+        boolean_useless_nodes.loc[nodes['osmid'] == first_node_to_keep] = False
     nodes = nodes[~boolean_useless_nodes]
     # print_nb_edges_nodes(edges, nodes)
 
@@ -568,7 +571,7 @@ def remove_useless_nodes(edges, nodes):
     return edges, nodes, len(degree2_nodes), N_same_start_end
 
 
-def simplification_B(files_folder, R=5, correction_connexe=True, output_folder=None):
+def simplification_B(files_folder, R=5, correction_connexe=True, threshold_connex=25e3, output_folder=None):
     logging.info("SIMPLIFICATION B PHASE")
     # files_folder = os.path.join(os.path.dirname(files_folder), "simp_A")
     files = set([file for file in os.listdir(os.path.join(files_folder)) if
@@ -589,11 +592,18 @@ def simplification_B(files_folder, R=5, correction_connexe=True, output_folder=N
             edges['v'] = edges['v'].astype(int)
             nodes['osmid'] = nodes['osmid'].astype(int)
 
+            edges = remove_duplicate_rows(edges)
             # Remove edges which have the same start and end nodes (seems to happen in edges that are disconnected from the main network)
             boolean_same_start_end = edges['u'] == edges['v']
             N_same_start_end = len(edges[boolean_same_start_end])
             # print(f'Removing {boolean_same_start_end.sum()} edges with same start and end nodes')
             edges = edges[~boolean_same_start_end]
+            boolean_useless_nodes = ~nodes['osmid'].isin(edges['u']) & ~nodes['osmid'].isin(edges['v'])
+            if boolean_useless_nodes.sum() == len(nodes):
+                # Tous les nœuds sont inutiles, conserver un nœud arbitraire
+                first_node_to_keep = nodes.iloc[0]['osmid']
+                boolean_useless_nodes.loc[nodes['osmid'] == first_node_to_keep] = False
+            nodes = nodes[~boolean_useless_nodes]
             print_nb_edges_nodes(edges, nodes)
         else:
             N_same_start_end = 1
@@ -604,7 +614,7 @@ def simplification_B(files_folder, R=5, correction_connexe=True, output_folder=N
             nodes["osmid"] = range(len(nodes["osmid"]))
             edges = assignEndpoints(edges, nodes)
             if correction_connexe:
-                nodes, edges = make_graph_connected(nodes, edges, 25e3)
+                nodes, edges = make_graph_connected(nodes, edges, threshold_connex)
 
             nodes, edges = merge_close_points(nodes, edges, R=R, min_samples=2)
 
@@ -615,11 +625,17 @@ def simplification_B(files_folder, R=5, correction_connexe=True, output_folder=N
             edges['v'] = edges['v'].astype(int)
             nodes['osmid'] = nodes['osmid'].astype(int)
 
+            edges = remove_duplicate_rows(edges)
             # Remove edges which have the same start and end nodes (seems to happen in edges that are disconnected from the main network)
             boolean_same_start_end = edges['u'] == edges['v']
-            N_same_start_end = len(edges[boolean_same_start_end])
             # print(f'Removing {boolean_same_start_end.sum()} edges with same start and end nodes')
             edges = edges[~boolean_same_start_end]
+            boolean_useless_nodes = ~nodes['osmid'].isin(edges['u']) & ~nodes['osmid'].isin(edges['v'])
+            if boolean_useless_nodes.sum() == len(nodes):
+                # Tous les nœuds sont inutiles, conserver un nœud arbitraire
+                first_node_to_keep = nodes.iloc[0]['osmid']
+                boolean_useless_nodes.loc[nodes['osmid'] == first_node_to_keep] = False
+            nodes = nodes[~boolean_useless_nodes]
             print_nb_edges_nodes(edges, nodes)
 
         else:
@@ -634,7 +650,7 @@ def simplification_B(files_folder, R=5, correction_connexe=True, output_folder=N
                     break
                 logging.debug("removing duplicate rows")
                 edges = remove_duplicate_rows(edges)
-                nodes, edges = planarize_graph(nodes, edges)
+                # nodes, edges = planarize_graph(nodes, edges)
                 edges, nodes, num_degree_2, N_same_start_end = remove_useless_nodes(edges, nodes)
 
         # Export
